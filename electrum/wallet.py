@@ -1880,11 +1880,10 @@ class Multipartytimelock_Wallet(Deterministic_Wallet):
         # Scripts will be overwritten later...
         # Instead: add 'redeem_script' field
         if x_pubkeys_available[0][0] == 0:
-            txin['additional_input'] = [bh2u(bytes([transaction.opcodes.OP_1]))]
-            txin['additional_input2'] = [1]
+            txin['additional_input'] = ['01']
         elif x_pubkeys_available[0][0] == 1:
-            txin['additional_input'] = [bh2u(bytes([transaction.opcodes.OP_0]))]
-            txin['additional_input2'] = [0]
+            # TODO also set nSequence!
+            txin['additional_input'] = [''] # 0
         txin['redeem_script'] = self.get_redeem_script(address)
 
 

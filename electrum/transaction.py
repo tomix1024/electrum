@@ -907,7 +907,7 @@ class Transaction:
                 witness_script = txin.get('redeem_script', None)
                 if witness_script == None:
                     witness_script = multisig_script(pubkeys, txin['num_sig'])
-                witness = construct_witness(sig_list + txin.get('additional_input2', []) + [witness_script]) # [0] +
+                witness = construct_witness(sig_list + txin.get('additional_input', []) + [witness_script]) # [0] +
             else:
                 witness = txin.get('witness', '00')
 
@@ -969,7 +969,7 @@ class Transaction:
 
         pubkeys, sig_list = self.get_siglist(txin, estimate_size)
         script = ''.join(push_script(x) for x in sig_list)
-        script += ''.join(x for x in txin.get('additional_input', []))
+        script += ''.join(push_script(x) for x in txin.get('additional_input', []))
         if _type == 'address' and estimate_size:
             _type = self.guess_txintype_from_address(txin['address'])
         if _type == 'p2pk':
