@@ -1771,7 +1771,124 @@ class Multisig_Wallet(Deterministic_Wallet):
         txin['num_sig'] = self.m
 
 
-wallet_types = ['standard', 'multisig', 'imported']
+class Multipartytimelock_Wallet(Deterministic_Wallet):
+
+    def __init__(self, storage):
+        print("init wallet")
+        self.wallet_type = storage.get('wallet_type')
+        self.n = 2 # TODO!
+        self.sequence_lock = storage.get('sequence_lock') # TODO!
+        Deterministic_Wallet.__init__(self, storage)
+
+    def get_pubkeys(self, c, i):
+        return self.derive_pubkeys(c, i)
+
+    def get_public_keys(self, address):
+        sequence = self.get_address_index(address)
+        return self.get_pubkeys(*sequence)
+
+    def pubkeys_to_address(self, pubkeys):
+        redeem_script = self.pubkeys_to_redeem_script(pubkeys)
+        return bitcoin.redeem_script_to_address(self.txin_type, redeem_script)
+
+    def pubkeys_to_redeem_script(self, pubkeys):
+        # NOTE: This changed! Don't sort pubkeys!
+        return transaction.multipartytimelock_script(pubkeys, self.sequence_lock)
+
+    def get_redeem_script(self, address):
+        pubkeys = self.get_public_keys(address)
+        redeem_script = self.pubkeys_to_redeem_script(pubkeys)
+        return redeem_script
+
+    def derive_pubkeys(self, c, i):
+        return [k.derive_pubkey(c, i) for k in self.get_keystores()]
+
+    def load_keystore(self):
+        self.keystores = {}
+        for i in range(self.n):
+            name = 'x%d/'%(i+1)
+            self.keystores[name] = load_keystore(self.storage, name)
+        self.keystore = self.keystores['x1/']
+        xtype = bip32.xpub_type(self.keystore.xpub)
+        self.txin_type = 'p2sh' if xtype == 'standard' else xtype
+
+    def save_keystore(self):
+        for name, k in self.keystores.items():
+            self.storage.put(name, k.dump())
+
+    def get_keystore(self):
+        return self.keystores.get('x1/')
+
+    def get_keystores(self):
+        return [self.keystores[i] for i in sorted(self.keystores.keys())]
+
+    def can_have_keystore_encryption(self):
+        return any([k.may_have_password() for k in self.get_keystores()])
+
+    def _update_password_for_keystore(self, old_pw, new_pw):
+        for name, keystore in self.keystores.items():
+            if keystore.may_have_password():
+                keystore.update_password(old_pw, new_pw)
+                self.storage.put(name, keystore.dump())
+
+    def check_password(self, password):
+        for name, keystore in self.keystores.items():
+            if keystore.may_have_password():
+                keystore.check_password(password)
+        self.storage.check_password(password)
+
+    def get_available_storage_encryption_version(self):
+        # multisig wallets are not offered hw device encryption
+        return STO_EV_USER_PW
+
+    def has_seed(self):
+        return self.keystore.has_seed()
+
+    def is_watching_only(self):
+        return all([k.is_watching_only() for k in self.get_keystores()])
+
+    def get_master_public_key(self):
+        return self.keystore.get_master_public_key()
+
+    def get_master_public_keys(self):
+        return [k.get_master_public_key() for k in self.get_keystores()]
+
+    def get_fingerprint(self):
+        # NOTE: keys are not sorted here!
+        return ''.join(self.get_master_public_keys())
+
+    def add_input_sig_info(self, txin, address):
+        # TODO THIS NEEDS TO BE LOOKED AT
+        # x_pubkeys are not sorted here because it would be too slow
+        # they are sorted in transaction.get_sorted_pubkeys
+        # pubkeys is set to None to signal that x_pubkeys are unsorted
+        derivation = self.get_address_index(address)
+        x_pubkeys_available = [(i, k.get_xpubkey(*derivation)) for i, k in enumerate(self.get_keystores()) if not k.is_watching_only()]
+        x_pubkeys_actual = txin.get('x_pubkeys')
+        # if 'x_pubkeys' is already set correctly (ignoring order, as above), leave it.
+        # otherwise we might delete signatures
+        # TODO we are good if x_pubkeys_actual only contains single key and this key is in x_pubkeys_expected
+        if x_pubkeys_actual:
+            return
+        txin['x_pubkeys'] = [x_pubkeys_available[0][1]] # TODO pick best key...
+        txin['pubkeys'] = None
+        # There will be only one signature of one of the keys!
+        txin['signatures'] = [None]
+        txin['num_sig'] = 1
+
+        # Put in the correct script(s) NOT HERE
+        # Scripts will be overwritten later...
+        # Instead: add 'redeem_script' field
+        if x_pubkeys_available[0][0] == 0:
+            txin['additional_input'] = [bh2u(bytes([transaction.opcodes.OP_1]))]
+            txin['additional_input2'] = [1]
+        elif x_pubkeys_available[0][0] == 1:
+            txin['additional_input'] = [bh2u(bytes([transaction.opcodes.OP_0]))]
+            txin['additional_input2'] = [0]
+        txin['redeem_script'] = self.get_redeem_script(address)
+
+
+wallet_types = ['standard', 'multisig', 'imported', 'multipartytimelock']
 
 def register_wallet_type(category):
     wallet_types.append(category)
@@ -1780,7 +1897,8 @@ wallet_constructors = {
     'standard': Standard_Wallet,
     'old': Standard_Wallet,
     'xpub': Standard_Wallet,
-    'imported': Imported_Wallet
+    'imported': Imported_Wallet,
+    'multipartytimelock': Multipartytimelock_Wallet
 }
 
 def register_constructor(wallet_type, constructor):

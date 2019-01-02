@@ -33,7 +33,7 @@ from . import bitcoin
 from . import keystore
 from .bip32 import is_bip32_derivation, xpub_type
 from .keystore import bip44_derivation, purpose48_derivation
-from .wallet import (Imported_Wallet, Standard_Wallet, Multisig_Wallet,
+from .wallet import (Imported_Wallet, Standard_Wallet, Multisig_Wallet, Multipartytimelock_Wallet,
                      wallet_types, Wallet, Abstract_Wallet)
 from .storage import (WalletStorage, STO_EV_USER_PW, STO_EV_XPUB_PW,
                       get_derivation_used_for_hw_device_encryption)
@@ -110,6 +110,7 @@ class BaseWizard(object):
             ('standard',  _("Standard wallet")),
             ('2fa', _("Wallet with two-factor authentication")),
             ('multisig',  _("Multi-signature wallet")),
+            ('multipartytimelock', _("Experimental multi-party timelocked wallet")),
             ('imported',  _("Import Bitcoin addresses or private keys")),
         ]
         choices = [pair for pair in wallet_kinds if pair[0] in wallet_types]
@@ -142,6 +143,8 @@ class BaseWizard(object):
             action = 'choose_keystore'
         elif choice == 'multisig':
             action = 'choose_multisig'
+        elif choice == 'multipartytimelock':
+            action = 'choose_multipartytimelock'
         elif choice == '2fa':
             self.load_2fa()
             action = self.storage.get_action()
@@ -157,8 +160,18 @@ class BaseWizard(object):
             self.run('choose_keystore')
         self.multisig_dialog(run_next=on_multisig)
 
+    def choose_multipartytimelock(self):
+        # TODO choose reasonable values! + add gui
+        # self.sequence_lock = 1<<22 | (time & 0xffff) # time based
+        # self.sequence_lock = (block & 0xffff) # block based
+        self.sequence_lock = 10 # lock for 10 blocks (100 minutes)
+        self.n = 2 # default value
+        self.storage.put('wallet_type', self.wallet_type)
+        self.storage.put('sequence_lock', self.sequence_lock)
+        self.run('choose_keystore')
+
     def choose_keystore(self):
-        assert self.wallet_type in ['standard', 'multisig']
+        assert self.wallet_type in ['standard', 'multisig', 'multipartytimelock']
         i = len(self.keystores)
         title = _('Add cosigner') + ' (%d of %d)'%(i+1, self.n) if self.wallet_type=='multisig' else _('Keystore')
         if self.wallet_type =='standard' or i==0:
@@ -429,7 +442,7 @@ class BaseWizard(object):
         self.derivation_and_script_type_dialog(f)
 
     def create_keystore(self, seed, passphrase):
-        k = keystore.from_seed(seed, passphrase, self.wallet_type == 'multisig')
+        k = keystore.from_seed(seed, passphrase, self.wallet_type in ['multisig', 'multipartytimelock'])
         self.on_keystore(k)
 
     def on_bip43(self, seed, passphrase, derivation, script_type):
@@ -447,7 +460,7 @@ class BaseWizard(object):
                 return
             self.keystores.append(k)
             self.run('create_wallet')
-        elif self.wallet_type == 'multisig':
+        elif self.wallet_type == 'multisig' or self.wallet_type == 'multipartytimelock':
             assert has_xpub
             if t1 not in ['standard', 'p2wsh', 'p2wsh-p2sh']:
                 self.show_error(_('Wrong key type') + ' %s'%t1)
@@ -528,6 +541,13 @@ class BaseWizard(object):
                 self.storage.put('x%d/'%(i+1), k.dump())
             self.storage.write()
             self.wallet = Multisig_Wallet(self.storage)
+            self.run('create_addresses')
+        elif self.wallet_type == 'multipartytimelock':
+            for i, k in enumerate(self.keystores):
+                self.storage.put('x%d/'%(i+1), k.dump())
+            self.storage.write()
+            print("create actual wallet")
+            self.wallet = Multipartytimelock_Wallet(self.storage)
             self.run('create_addresses')
         elif self.wallet_type == 'imported':
             if len(self.keystores) > 0:

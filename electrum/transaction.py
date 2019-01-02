@@ -657,7 +657,37 @@ def multisig_script(public_keys: Sequence[str], m: int) -> str:
     keylist = [push_script(k) for k in public_keys]
     return op_m + ''.join(keylist) + op_n + 'ae'
 
+def multipartytimelock_script(public_keys: Sequence[str], sequence_lock: int) -> str:
+    n = len(public_keys)
+    # for now we just support two parties!
+    assert n == 2
+    # <sig> <pubkey> <i> | OP_IF <key> OP_ELSE <time> OP_CHECKSEQUENCEVERIFY op_drop <key> OP_ENDIF OP_CHECKSIG
+    keylist = [push_script(k) for k in public_keys]
 
+    # TODO more constraints on sequence_lock
+    assert sequence_lock >= 0
+
+    # TODO better encoding of this thing!
+    if sequence_lock > 75:
+        sequence_bytes = bytes([(sequence_lock >> 0) & 0xff, (sequence_lock >> 8) & 0xff, (sequence_lock >> 16) & 0xff, (sequence_lock >> 24) & 0xff])
+        size = 4
+        while size > 0 and sequence_bytes[size-1] == 0:
+            size -= 1
+
+        op_sequence = bh2u(bytes([opcodes.OP_0 + size]) + sequence_bytes[0:size]) # TODO proper opcode!
+    elif sequence_lock > 0:
+        # native op code for push!
+        op_sequence = bh2u(bytes([opcodes.OP_1 - 1 + sequence_lock]))
+    else:
+        op_sequence = bh2u(bytes([opcodes.OP_0]))
+
+    op_if = '63'
+    op_else = '67'
+    op_endif = '68'
+    op_checksequenceverify = 'b2'
+    op_drop = '75'
+    op_checksig = 'ac'
+    return op_if + keylist[0] + op_else + op_sequence + op_checksequenceverify + op_drop + keylist[1] + op_endif + op_checksig
 
 
 class Transaction:
@@ -874,8 +904,10 @@ class Transaction:
             if _type in ['p2wpkh', 'p2wpkh-p2sh']:
                 witness = construct_witness([sig_list[0], pubkeys[0]])
             elif _type in ['p2wsh', 'p2wsh-p2sh']:
-                witness_script = multisig_script(pubkeys, txin['num_sig'])
-                witness = construct_witness([0] + sig_list + [witness_script])
+                witness_script = txin.get('redeem_script', None)
+                if witness_script == None:
+                    witness_script = multisig_script(pubkeys, txin['num_sig'])
+                witness = construct_witness(sig_list + txin.get('additional_input2', []) + [witness_script]) # [0] +
             else:
                 witness = txin.get('witness', '00')
 
@@ -925,6 +957,8 @@ class Transaction:
         if _type == 'coinbase':
             return txin['scriptSig']
 
+        # TODO add the scripts to txins before creating transaction in wallet!
+
         # If there is already a saved scriptSig, just return that.
         # This allows manual creation of txins of any custom type.
         # However, if the txin is not complete, we might have some garbage
@@ -935,6 +969,7 @@ class Transaction:
 
         pubkeys, sig_list = self.get_siglist(txin, estimate_size)
         script = ''.join(push_script(x) for x in sig_list)
+        script += ''.join(x for x in txin.get('additional_input', []))
         if _type == 'address' and estimate_size:
             _type = self.guess_txintype_from_address(txin['address'])
         if _type == 'p2pk':
@@ -942,7 +977,10 @@ class Transaction:
         elif _type == 'p2sh':
             # put op_0 before script
             script = '00' + script
-            redeem_script = multisig_script(pubkeys, txin['num_sig'])
+            # TODO when to use multisig vs multipartytimelock or even others?!
+            redeem_script = txin.get('redeem_script', None)
+            if redeem_script == None:
+                redeem_script = multisig_script(pubkeys, txin['num_sig'])
             script += push_script(redeem_script)
         elif _type == 'p2pkh':
             script += push_script(pubkeys[0])
@@ -986,7 +1024,10 @@ class Transaction:
         if txin['type'] == 'p2pkh':
             return bitcoin.address_to_script(txin['address'])
         elif txin['type'] in ['p2sh', 'p2wsh', 'p2wsh-p2sh']:
-            return multisig_script(pubkeys, txin['num_sig'])
+            script = txin.get('redeem_script', None)
+            if script == None:
+                script = multisig_script(pubkeys, txin['num_sig'])
+            return script
         elif txin['type'] in ['p2wpkh', 'p2wpkh-p2sh']:
             pubkey = pubkeys[0]
             pkh = bh2u(hash_160(bfh(pubkey)))
