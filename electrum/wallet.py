@@ -1820,7 +1820,8 @@ class Multipartytimelock_Wallet(Deterministic_Wallet):
         return self.keystores.get('x1/')
 
     def get_keystores(self):
-        return [self.keystores[i] for i in sorted(self.keystores.keys())]
+        # NOTE: this should not be sorted!
+        return [self.keystores[i] for i in self.keystores.keys()]
 
     def can_have_keystore_encryption(self):
         return any([k.may_have_password() for k in self.get_keystores()])
@@ -1863,27 +1864,39 @@ class Multipartytimelock_Wallet(Deterministic_Wallet):
         # they are sorted in transaction.get_sorted_pubkeys
         # pubkeys is set to None to signal that x_pubkeys are unsorted
         derivation = self.get_address_index(address)
-        x_pubkeys_available = [(i, k.get_xpubkey(*derivation)) for i, k in enumerate(self.get_keystores()) if not k.is_watching_only()]
+        x_pubkeys_available = [k.get_xpubkey(*derivation) for k in self.get_keystores()]
         x_pubkeys_actual = txin.get('x_pubkeys')
         # if 'x_pubkeys' is already set correctly (ignoring order, as above), leave it.
         # otherwise we might delete signatures
         # TODO we are good if x_pubkeys_actual only contains single key and this key is in x_pubkeys_expected
-        if x_pubkeys_actual:
+
+        print([k.is_watching_only() for k in self.get_keystores()])
+        key_index = 0
+        if self.get_keystores()[0].is_watching_only() and not self.get_keystores()[1].is_watching_only():
+            # use second key only if first key not available and second key can sign...
+            key_index = 1
+        print(key_index)
+
+        if x_pubkeys_actual and set(x_pubkeys_actual) == set([x_pubkeys_available[key_index]]):
             return
-        txin['x_pubkeys'] = [x_pubkeys_available[0][1]] # TODO pick best key...
+        txin['x_pubkeys'] = [x_pubkeys_available[key_index]]
         txin['pubkeys'] = None
         # There will be only one signature of one of the keys!
         txin['signatures'] = [None]
         txin['num_sig'] = 1
 
+        if key_index == 0:
+            txin['additional_input'] = ['01']
+        elif key_index == 1:
+            # TODO also set nSequence!
+            txin['additional_input'] = [''] # 0
+            txin['sequence'] = self.sequence_lock
+        else:
+            raise Exception("Invalid key index %d" % key_index)
+
         # Put in the correct script(s) NOT HERE
         # Scripts will be overwritten later...
         # Instead: add 'redeem_script' field
-        if x_pubkeys_available[0][0] == 0:
-            txin['additional_input'] = ['01']
-        elif x_pubkeys_available[0][0] == 1:
-            # TODO also set nSequence!
-            txin['additional_input'] = [''] # 0
         txin['redeem_script'] = self.get_redeem_script(address)
 
 
