@@ -350,7 +350,7 @@ class BaseWizard(object):
             _('You can override the suggested derivation path.'),
             _('If you are not sure what this is, leave this field unchanged.')
         ])
-        if self.wallet_type == 'multisig':
+        if self.wallet_type in ['multisig', 'multipartytimelock']:
             # There is no general standard for HD multisig.
             # For legacy, this is partially compatible with BIP45; assumes index=0
             # For segwit, a custom path is used, as there is no standard at all.
