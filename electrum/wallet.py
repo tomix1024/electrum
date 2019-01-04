@@ -1770,6 +1770,15 @@ class Multisig_Wallet(Deterministic_Wallet):
         txin['signatures'] = [None] * self.n
         txin['num_sig'] = self.m
 
+        txin['additional_input'] = [''] # additional 00 input for OP_CHECKMULTISIG bug
+
+        txin['input_permutation'] = [self.m] + [i for i in range(self.m)] # 00, sig1, ...,
+
+        # Put in the correct script(s) NOT HERE
+        # Scripts will be overwritten later...
+        # Instead: add 'redeem_script' field
+        txin['redeem_script'] = self.get_redeem_script(address)
+
 
 class Multipartytimelock_Wallet(Deterministic_Wallet):
 
@@ -1893,6 +1902,8 @@ class Multipartytimelock_Wallet(Deterministic_Wallet):
             txin['sequence'] = self.sequence_lock
         else:
             raise Exception("Invalid key index %d" % key_index)
+
+        txin['input_permutation'] = [0, 1] # sig, True/False
 
         # Put in the correct script(s) NOT HERE
         # Scripts will be overwritten later...
