@@ -1783,7 +1783,6 @@ class Multisig_Wallet(Deterministic_Wallet):
 class Multipartytimelock_Wallet(Deterministic_Wallet):
 
     def __init__(self, storage):
-        print("init wallet")
         self.wallet_type = storage.get('wallet_type')
         self.n = 2 # TODO!
         self.sequence_lock = storage.get('sequence_lock') # TODO!
@@ -1879,12 +1878,10 @@ class Multipartytimelock_Wallet(Deterministic_Wallet):
         # otherwise we might delete signatures
         # TODO we are good if x_pubkeys_actual only contains single key and this key is in x_pubkeys_expected
 
-        print([k.is_watching_only() for k in self.get_keystores()])
         key_index = 0
         if self.get_keystores()[0].is_watching_only() and not self.get_keystores()[1].is_watching_only():
             # use second key only if first key not available and second key can sign...
             key_index = 1
-        print(key_index)
 
         if x_pubkeys_actual and set(x_pubkeys_actual) == set([x_pubkeys_available[key_index]]):
             return
