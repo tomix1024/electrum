@@ -657,7 +657,7 @@ def multisig_script(public_keys: Sequence[str], m: int) -> str:
     keylist = [push_script(k) for k in public_keys]
     return op_m + ''.join(keylist) + op_n + 'ae'
 
-def multipartytimelock_script(public_keys: Sequence[str], sequence_lock: int) -> str:
+def multipartysequencelock_script(public_keys: Sequence[str], sequence_lock: int) -> str:
     n = len(public_keys)
     # for now we just support two parties!
     assert n == 2
@@ -676,6 +676,27 @@ def multipartytimelock_script(public_keys: Sequence[str], sequence_lock: int) ->
     op_drop = '75'
     op_checksig = 'ac'
     return op_if + keylist[0] + op_else + op_sequence + op_checksequenceverify + op_drop + keylist[1] + op_endif + op_checksig
+
+
+def multipartytimelock_script(public_keys: Sequence[str], time_lock: int) -> str:
+    n = len(public_keys)
+    # for now we just support two parties!
+    assert n == 2
+    # <sig> <pubkey> <i> | OP_IF <key> OP_ELSE <time> OP_CHECKSEQUENCEVERIFY op_drop <key> OP_ENDIF OP_CHECKSIG
+    keylist = [push_script(k) for k in public_keys]
+
+    # TODO more constraints on time_lock
+    assert time_lock >= 0
+
+    op_time = push_script(bitcoin.script_num_to_hex(time_lock))
+
+    op_if = '63'
+    op_else = '67'
+    op_endif = '68'
+    op_checklocktimeverify = 'b1'
+    op_drop = '75'
+    op_checksig = 'ac'
+    return op_if + keylist[0] + op_else + op_time + op_checklocktimeverify + op_drop + keylist[1] + op_endif + op_checksig
 
 
 class Transaction:

@@ -692,6 +692,7 @@ class Abstract_Wallet(AddressSynchronizer):
             tx = Transaction.from_io(coins, outputs[:])
 
         # Timelock tx to current height.
+        # TODO allow this to be time based as well!
         tx.locktime = self.get_local_height()
         run_hook('make_unsigned_transaction', self, tx)
         return tx
@@ -1780,12 +1781,10 @@ class Multisig_Wallet(Deterministic_Wallet):
         txin['redeem_script'] = self.get_redeem_script(address)
 
 
-class Multipartytimelock_Wallet(Deterministic_Wallet):
+class Unsorted_Multiparty_Wallet(Deterministic_Wallet):
 
     def __init__(self, storage):
         self.wallet_type = storage.get('wallet_type')
-        self.n = 2 # TODO!
-        self.sequence_lock = storage.get('sequence_lock') # TODO!
         Deterministic_Wallet.__init__(self, storage)
 
     def get_pubkeys(self, c, i):
@@ -1798,10 +1797,6 @@ class Multipartytimelock_Wallet(Deterministic_Wallet):
     def pubkeys_to_address(self, pubkeys):
         redeem_script = self.pubkeys_to_redeem_script(pubkeys)
         return bitcoin.redeem_script_to_address(self.txin_type, redeem_script)
-
-    def pubkeys_to_redeem_script(self, pubkeys):
-        # NOTE: This changed! Don't sort pubkeys!
-        return transaction.multipartytimelock_script(pubkeys, self.sequence_lock)
 
     def get_redeem_script(self, address):
         pubkeys = self.get_public_keys(address)
@@ -1866,6 +1861,18 @@ class Multipartytimelock_Wallet(Deterministic_Wallet):
         # NOTE: keys are not sorted here!
         return ''.join(self.get_master_public_keys())
 
+
+class Multiparty_Sequencelock_Wallet(Unsorted_Multiparty_Wallet):
+
+    def __init__(self, storage):
+        self.n = 2 # TODO!
+        self.sequence_lock = storage.get('sequence_lock')
+        Unsorted_Multiparty_Wallet.__init__(self, storage)
+
+    def pubkeys_to_redeem_script(self, pubkeys):
+        # NOTE: This changed! Don't sort pubkeys!
+        return transaction.multipartysequencelock_script(pubkeys, self.sequence_lock)
+
     def add_input_sig_info(self, txin, address):
         # TODO THIS NEEDS TO BE LOOKED AT
         # x_pubkeys are not sorted here because it would be too slow
@@ -1897,6 +1904,7 @@ class Multipartytimelock_Wallet(Deterministic_Wallet):
             # TODO also set nSequence!
             txin['additional_input'] = [''] # 0
             txin['sequence'] = self.sequence_lock
+            print("sequence ", self.sequence_lock)
         else:
             raise Exception("Invalid key index %d" % key_index)
 
@@ -1908,7 +1916,59 @@ class Multipartytimelock_Wallet(Deterministic_Wallet):
         txin['redeem_script'] = self.get_redeem_script(address)
 
 
-wallet_types = ['standard', 'multisig', 'imported', 'multipartytimelock']
+class Multiparty_Timelock_Wallet(Unsorted_Multiparty_Wallet):
+
+    def __init__(self, storage):
+        self.n = 2 # TODO!
+        self.time_lock = storage.get('time_lock')
+        Unsorted_Multiparty_Wallet.__init__(self, storage)
+
+    def pubkeys_to_redeem_script(self, pubkeys):
+        # NOTE: This changed! Don't sort pubkeys!
+        return transaction.multipartytimelock_script(pubkeys, self.time_lock)
+
+    def add_input_sig_info(self, txin, address):
+        # TODO THIS NEEDS TO BE LOOKED AT
+        # x_pubkeys are not sorted here because it would be too slow
+        # they are sorted in transaction.get_sorted_pubkeys
+        # pubkeys is set to None to signal that x_pubkeys are unsorted
+        derivation = self.get_address_index(address)
+        x_pubkeys_available = [k.get_xpubkey(*derivation) for k in self.get_keystores()]
+        x_pubkeys_actual = txin.get('x_pubkeys')
+        # if 'x_pubkeys' is already set correctly (ignoring order, as above), leave it.
+        # otherwise we might delete signatures
+        # TODO we are good if x_pubkeys_actual only contains single key and this key is in x_pubkeys_expected
+
+        key_index = 0
+        if self.get_keystores()[0].is_watching_only() and not self.get_keystores()[1].is_watching_only():
+            # use second key only if first key not available and second key can sign...
+            key_index = 1
+
+        if x_pubkeys_actual and set(x_pubkeys_actual) == set([x_pubkeys_available[key_index]]):
+            return
+        txin['x_pubkeys'] = [x_pubkeys_available[key_index]]
+        txin['pubkeys'] = None
+        # There will be only one signature of one of the keys!
+        txin['signatures'] = [None]
+        txin['num_sig'] = 1
+
+        if key_index == 0:
+            txin['additional_input'] = ['01']
+        elif key_index == 1:
+            # TODO if time_lock is time based, transaction lock time must be time based as well!
+            txin['additional_input'] = [''] # 0
+        else:
+            raise Exception("Invalid key index %d" % key_index)
+
+        txin['input_permutation'] = [0, 1] # sig, True/False
+
+        # Put in the correct script(s) NOT HERE
+        # Scripts will be overwritten later...
+        # Instead: add 'redeem_script' field
+        txin['redeem_script'] = self.get_redeem_script(address)
+
+
+wallet_types = ['standard', 'multisig', 'imported', 'multipartytimelock', 'multipartysequencelock']
 
 def register_wallet_type(category):
     wallet_types.append(category)
@@ -1918,7 +1978,8 @@ wallet_constructors = {
     'old': Standard_Wallet,
     'xpub': Standard_Wallet,
     'imported': Imported_Wallet,
-    'multipartytimelock': Multipartytimelock_Wallet
+    'multipartytimelock': Multiparty_Timelock_Wallet,
+    'multipartysequencelock' : Multiparty_Sequencelock_Wallet
 }
 
 def register_constructor(wallet_type, constructor):
