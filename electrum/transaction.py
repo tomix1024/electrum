@@ -667,19 +667,7 @@ def multipartytimelock_script(public_keys: Sequence[str], sequence_lock: int) ->
     # TODO more constraints on sequence_lock
     assert sequence_lock >= 0
 
-    # TODO better encoding of this thing!
-    if sequence_lock > 75:
-        sequence_bytes = bytes([(sequence_lock >> 0) & 0xff, (sequence_lock >> 8) & 0xff, (sequence_lock >> 16) & 0xff, (sequence_lock >> 24) & 0xff])
-        size = 4
-        while size > 0 and sequence_bytes[size-1] == 0:
-            size -= 1
-
-        op_sequence = bh2u(bytes([opcodes.OP_0 + size]) + sequence_bytes[0:size]) # TODO proper opcode!
-    elif sequence_lock > 0:
-        # native op code for push!
-        op_sequence = bh2u(bytes([opcodes.OP_1 - 1 + sequence_lock]))
-    else:
-        op_sequence = bh2u(bytes([opcodes.OP_0]))
+    op_sequence = push_script(bitcoin.script_num_to_hex(sequence_lock))
 
     op_if = '63'
     op_else = '67'
