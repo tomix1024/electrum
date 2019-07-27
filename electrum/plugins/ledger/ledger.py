@@ -362,9 +362,12 @@ class Ledger_KeyStore(Hardware_KeyStore):
                     hwAddress = "%s/%d/%d" % (self.get_derivation()[2:], s[0], s[1])
                     break
             else:
-                self.give_error("No matching x_key for sign_transaction") # should never happen
+                signingPos = None
+                hwAddress = None
+                # This txin does not belong to us!
+                #self.give_error("No matching x_key for sign_transaction") # should never happen
 
-            redeemScript = Transaction.get_preimage_script(txin)
+            redeemScript = Transaction.get_preimage_script(txin) if hwAddress != None else None
             txin_prev_tx = txin.get('prev_tx')
             if txin_prev_tx is None and not Transaction.is_segwit_input(txin):
                 raise UserFacingException(_('Offline signing with {} is not supported for legacy inputs.').format(self.device))
@@ -473,6 +476,14 @@ class Ledger_KeyStore(Hardware_KeyStore):
                     inputIndex = inputIndex + 1
             else:
                 while inputIndex < len(inputs):
+
+                    # Don't try to produce a signature, if this input does not belong to us
+                    if inputsPaths[inputIndex] == None:
+                        # For this input, we do not produce a signature
+                        signatures.append(None)
+                        inputIndex = inputIndex + 1
+                        continue
+
                     self.get_client().startUntrustedTransaction(firstTransaction, inputIndex,
                                                                 chipInputs, redeemScripts[inputIndex], version=tx.version)
                     # we don't set meaningful outputAddress, amount and fees
@@ -513,8 +524,10 @@ class Ledger_KeyStore(Hardware_KeyStore):
             self.handler.finished()
 
         for i, txin in enumerate(tx.inputs()):
-            signingPos = inputs[i][4]
-            tx.add_signature_to_txin(i, signingPos, bh2u(signatures[i]))
+            # Only apply the signature if a signature was produced
+            if signatures[i] != None:
+                signingPos = inputs[i][4]
+                tx.add_signature_to_txin(i, signingPos, bh2u(signatures[i]))
         tx.raw = tx.serialize()
 
     @test_pin_unlocked
